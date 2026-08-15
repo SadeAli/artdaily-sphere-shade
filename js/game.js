@@ -319,6 +319,11 @@
       if (proj < lo) lo = proj;
       if (proj > hi) hi = proj;
     }
+    /* A non-finite sample poisons the fit, and `NaN < need` is false — so
+       an unreadable stroke would be COMMITTED as the terminator and then
+       draw nothing. Unreadable is unreadable: say so the same way a short
+       stroke does. */
+    if (!isFinite(axis) || !isFinite(hi - lo)) return null;
     return { axis: norm180(axis / DEG), span: hi - lo };
   }
 
@@ -552,14 +557,27 @@
      drill winnable — the line runs square to the light — used to live in
      the fourth paragraph of a collapsed how-to while carrying 40% of the
      score. It says it on the first screen now, and the reveal is where
-     "terminator" gets defined by a picture. */
+     "terminator" gets defined by a picture.
+
+     ONE INSTRUCTION AT A TIME. The single hint used to carry the line, the
+     lift-and-resume rule and all three marks in one 350-character
+     paragraph — a wall of text on the cold-open screen, four fifths of it
+     about a step the player has not reached. So the line is asked for
+     alone, and the three marks are named the moment the line exists.
+     Lift-and-resume is not dropped, only moved: commitStroke says it at
+     the exact moment a short stroke is lifted, which is the only moment
+     it means anything. */
   function setPlaceHint() {
-    hint.textContent = 'sphere ' + (sphereIdx + 1) + ' of ' + SPHERES_PER_ROUND +
-      ' — draw the line across the sphere that runs square to the light arrow: ' +
-      'that is where the light stops (its studio name is the terminator). ' +
-      'lifting is fine — press near where you stopped and carry on. ' +
-      'then drag c = darkest band · b = light bouncing back off the floor · ' +
-      'o = where the ball touches the ground. (keys 1–4 + arrows)';
+    var head = 'sphere ' + (sphereIdx + 1) + ' of ' + SPHERES_PER_ROUND + ' — ';
+    if (!marks || !marks.drawn) {
+      hint.textContent = head + 'draw the line across the sphere that runs square ' +
+        'to the light arrow: that is where the light stops ' +
+        '(its studio name is the terminator).';
+      return;
+    }
+    hint.textContent = head + 'line set. now drag the three marks — ' +
+      'c = darkest band · b = light bouncing back off the floor · ' +
+      'o = where the ball touches the ground — then press done. (keys 1–4 + arrows)';
   }
 
   /* the glyph is decoration — screen readers should hear "next sphere",
@@ -1372,8 +1390,13 @@
       marks.ody = Math.max(-0.12, Math.min(0.55, marks.ody + dy * 0.04));
     } else {
       var step = (dx + dy) * 2; /* right/down = clockwise in canvas space */
-      if (kbSel === 0) { marks.t = norm180(marks.t + step); marks.drawn = true; marks.stroke = null; }
-      else if (kbSel === 1) marks.k = norm180(marks.k + step);
+      if (kbSel === 0) {
+        marks.t = norm180(marks.t + step);
+        /* nudging the line by keyboard IS drawing it, so the hint has to
+           move on to the marks exactly as it does after a stroke */
+        if (!marks.drawn) { marks.drawn = true; setPlaceHint(); }
+        marks.stroke = null;
+      } else if (kbSel === 1) marks.k = norm180(marks.k + step);
       else marks.r = norm180(marks.r + step);
     }
     draw();
@@ -1438,7 +1461,14 @@
     hint.textContent = 'round done — ink is yours, lilac is the answer. press “new round” to go again.';
     setDoneLabel('finished', '✓');
     btnDone.disabled = true;
-    showToast((res.isNewBest ? 'new best! ' : 'score ') + res.score + ' / 100', res.isNewBest);
+    /* A first-ever round has no previous best, so isNewBest is
+       trivially true and "new best!" celebrates nothing — on the one
+       round where the number most needs saying what it IS. The SDK
+       marks that round with isFirst; an older vendored SDK simply
+       leaves it undefined and the old wording stands. */
+    showToast(res.isFirst
+      ? 'first score ' + res.score + ' / 100 — your mark to beat'
+      : (res.isNewBest ? 'new best! ' : 'score ') + res.score + ' / 100', res.isNewBest);
   }
 
   var toastTimer = null;
