@@ -39,6 +39,16 @@
   var GRACE_PX = 11;     /* …with a pixel floor, so a small sheet is not stricter */
   var ZERO_PX = 60;      /* …and a floor under the occlusion ramp too */
   var OCC_BIAS = 0.22;   /* contact pool, pushed this far down-light */
+  /* THE CORE'S DEAD BAND. The ground bounce is exactly anti-parallel to
+     the light when the sun stands 45° over the floor — B(L)·L =
+     −sin(alt + 45°) identically — so the only component that varies
+     along the core circle, |cos(alt + 45°)|, is zero there: every point
+     of the core catches the same bounce and "where is the core darkest"
+     has no answer. Lights inside this band of 45° are not dealt (see
+     newSphere), and trueCoreAngle falls back to the anti-light point
+     rather than let a knife-edge optimum pick for it. */
+  var CORE_DEAD_BAND = 6;
+  var CORE_FLAT_EPS = 1e-3;
 
   /* the camera looks down by this much — the one declared angle that
      makes a horizontal floor read as a plane instead of a line, and
@@ -169,7 +179,13 @@
     var c = coreCircle(1, L);
     var B = bounceVec(L);
     var p = dot3(c.basis.u, B), q = dot3(c.basis.v, B);
-    var m = Math.sqrt(p * p + q * q) || 1;
+    var m = Math.sqrt(p * p + q * q);
+    /* Bounce anti-parallel to the light: the core is uniformly lit and
+       the optimum below is a coin toss between two opposite arcs. The
+       well-defined answer is the textbook one — straight opposite the
+       light — instead of whichever end the arithmetic happened to land
+       on. newSphere does not deal these lights; this is the brace. */
+    if (m < CORE_FLAT_EPS) return norm180(lightAzDeg(L) + 180);
     var cand = [Math.atan2(-q / m, -p / m)];
     var s = -c.centre.z / (c.rho * c.basis.v.z);
     if (s >= -1 && s <= 1) {
@@ -444,7 +460,7 @@
   }
 
   function newSphere(idx) {
-    var az, tilt, L, tries = 0;
+    var az, tilt, L, alt, tries = 0;
     /* first-ever visit: keep BOTH spheres on the easy light. Escalating
        before the first idea has landed is how a beginner decides the
        drill is not for them. */
@@ -464,8 +480,12 @@
         tilt = Math.random() < 0.5 ? -rand(26, 46) : rand(22, 36);
       }
       L = lightVec(az, tilt);
+      alt = sunAltitudeDeg(L);
       tries += 1;
-    } while (tries < 24 && (sunAltitudeDeg(L) < 15 || sunAltitudeDeg(L) > 74));
+      /* …and never a sun sitting on 45°, where the ground bounce cancels
+         along the light and the core has no darkest point to find (see
+         CORE_DEAD_BAND). About one draw in ten is re-rolled for it. */
+    } while (tries < 24 && (alt < 15 || alt > 74 || Math.abs(alt - 45) < CORE_DEAD_BAND));
 
     S = { L: L, az: az, tilt: tilt };
     relayout();
@@ -1262,6 +1282,19 @@
   function endDrag(ev) {
     if (dragId === null) return;
     if (ev && ev.pointerId !== dragId) return;
+    /* "done" can score the sphere while a finger is still drawing (a
+       second finger, or Enter), so the phase may already be 'reveal' by
+       the time the pointer lifts. Committing then would overwrite the
+       scored terminator and replace the reveal's score line with the
+       placing hint — the in-flight stroke is dropped instead. */
+    if (phase !== 'place') {
+      drawingStroke = false;
+      dragging = -1;
+      dragId = null;
+      dragType = '';
+      grabOff = null;
+      return;
+    }
     if (drawingStroke) {
       var s = marks.stroke;
       if (s && s.length) { liftPt = s[s.length - 1]; liftAt = Date.now(); }
@@ -1290,6 +1323,9 @@
      bad one — the ink is kept and the sheet says exactly what happened,
      instead of binning the stroke and blaming the hand that made it. */
   function commitStroke() {
+    /* nothing is fitted once the sphere is scored — endDrag already
+       drops an in-flight stroke, and this is the belt to that brace */
+    if (phase !== 'place') return;
     var pts = [], i, s = marks.stroke || [];
     for (i = 0; i < s.length; i++) {
       if (Math.hypot(s[i].x - S.cx, s[i].y - S.cy) <= S.R * 1.25) pts.push(s[i]);
