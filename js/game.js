@@ -34,8 +34,10 @@
      ============================================================ */
 
   var CORE_BETA = 22;    /* the core band sits this far past the terminator */
-  var GRACE_DEG = 3;     /* inside this, a mark is simply right */
+  var GRACE_DEG = 3;     /* inside this, a mark is simply right (pen standard) */
   var GRACE_R = 0.08;    /* …and the same idea for the occlusion, in radii */
+  var GRACE_PX = 11;     /* …with a pixel floor, so a small sheet is not stricter */
+  var ZERO_PX = 60;      /* …and a floor under the occlusion ramp too */
   var OCC_BIAS = 0.22;   /* contact pool, pushed this far down-light */
 
   /* the camera looks down by this much — the one declared angle that
@@ -232,21 +234,44 @@
     return { a: run * d.a, b: run * d.b, major: R / Math.sin(alt), minor: R, dir: d };
   }
 
-  function scoreTerminator(axisDeg, L) {
+  /* The angle RAMPS are knowledge, not motor skill: this drill throws the
+     drawn line away and scores only the axis it implies (fitStrokeAxis),
+     and the three marks are angle drags that work at any distance from the
+     sphere — so a mouse and a pen that mean the same thing already score
+     the same, and widening the ramps would only hand out points for not
+     knowing where the light is. What DOES depend on the hardware is the
+     GRACE zone: the slop between "I meant that" and "I hit that". That is
+     what ArtDaily.ease() opens per input mode — and the HUD says which
+     mode it opened for. The occlusion works in pixels with a floor under
+     both the grace and the ramp, so a 330px phone sheet is not judged to a
+     stricter absolute standard than a 700px desktop one. */
+  function scoreTerminator(axisDeg, L, grace) {
     var angErr = axisDiffDeg(axisDeg, trueTerminatorAxis(L));
-    return 100 * clamp01(1 - Math.max(0, angErr - GRACE_DEG) / 75);
+    return 100 * clamp01(1 - Math.max(0, angErr - grace) / 75);
   }
-  function scoreCore(angDeg, L) {
+  function scoreCore(angDeg, L, grace) {
     var bandAngErr = angDiffDeg(angDeg, trueCoreAngle(L));
-    return 100 * clamp01(1 - Math.max(0, bandAngErr - GRACE_DEG) / 60);
+    return 100 * clamp01(1 - Math.max(0, bandAngErr - grace) / 60);
   }
-  function scoreReflected(angDeg, L) {
+  function scoreReflected(angDeg, L, grace) {
     var arcAngErr = angDiffDeg(angDeg, trueReflectedAngle(L));
-    return 100 * clamp01(1 - Math.max(0, arcAngErr - GRACE_DEG) / 70);
+    return 100 * clamp01(1 - Math.max(0, arcAngErr - grace) / 70);
   }
-  function scoreOcclusion(px, py, tx, ty, R) {
-    var dist = Math.hypot(px - tx, py - ty) / (R || 1);
-    return 100 * clamp01(1 - Math.max(0, dist - GRACE_R) / 0.9);
+  function scoreOcclusion(px, py, tx, ty, graceDist, zeroDist) {
+    var dist = Math.hypot(px - tx, py - ty);
+    if (!isFinite(dist)) return 0;
+    return 100 * clamp01(1 - Math.max(0, dist - graceDist) / (zeroDist > 0 ? zeroDist : ZERO_PX));
+  }
+
+  /* The three tolerances a round is scored with, for the hardware in the
+     player's hand right now. Pure: pass the sphere radius in, get pixels
+     and degrees out. */
+  function tolerances(R, ease) {
+    return {
+      grace: ease(GRACE_DEG),
+      occGrace: Math.max(ease(GRACE_R) * (R || 0), ease(GRACE_PX)),
+      occZero: Math.max(0.9 * (R || 0), ZERO_PX),
+    };
   }
   function itemScore(t, c, r, o) {
     return 0.4 * t + 0.25 * c + 0.15 * r + 0.2 * o;
@@ -327,6 +352,24 @@
     try { return window.matchMedia('(pointer: coarse)').matches; } catch (e) { return false; }
   })();
 
+  /* A player with no recorded best is here for the first time: both
+     spheres keep the easy near-picture-plane light, so the first round is
+     winnable before the drill starts escalating. */
+  var FIRST_VISIT = ArtDaily.best() === null;
+
+  function ease(v) { return ArtDaily.ease(v); }
+
+  /* Grab reach for the three marks. A screenless pen tablet has the
+     hardest job of any device here — the hand is out of sight — so
+     ArtDaily.startRadius gives it the widest zone, and a coarse pointer
+     never drops below the 44px target the sheet's own CSS enforces. */
+  function hitR() { return Math.max(ArtDaily.startRadius(26), COARSE ? 30 : 22); }
+
+  /* Mark orbits. Bounce rides just outside the rim so that on a 330px
+     phone it is not 10px from the core mark: 0.75R vs 1.08R keeps them a
+     third of a radius apart at every size. */
+  var CORE_ORBIT = 0.75, BOUNCE_ORBIT = 1.08;
+
   /* ---- theme-aware inks (re-read on every repaint) ---- */
   function inks() {
     var cs = getComputedStyle(document.documentElement);
@@ -384,7 +427,10 @@
 
   function relayout() {
     if (!S) return;
-    S.R = Math.max(34, Math.min(0.32 * H, 0.175 * W));
+    /* A phone gets a BIGGER sphere, not just a smaller sheet: at 0.175·W
+       the radius fell to 58px at 330px wide, which is what put the core
+       and bounce marks 10px apart under one fingertip. */
+    S.R = Math.max(40, Math.min(0.30 * H, (W < 520 ? 0.20 : 0.175) * W));
     S.groundY = Math.round(0.74 * H);
     S.cx = Math.round(0.30 * W);
     S.cy = S.groundY - S.R;
@@ -399,8 +445,12 @@
 
   function newSphere(idx) {
     var az, tilt, L, tries = 0;
+    /* first-ever visit: keep BOTH spheres on the easy light. Escalating
+       before the first idea has landed is how a beginner decides the
+       drill is not for them. */
+    var easy = idx === 0 || (FIRST_VISIT && round <= 1);
     do {
-      if (idx === 0) {
+      if (easy) {
         /* side light close to the picture plane: the classic almost
            straight terminator, low sun */
         az = Math.random() < 0.5 ? rand(-166, -146) : rand(-34, -14);
@@ -478,10 +528,18 @@
     btnRound.appendChild(s);
   }
 
+  /* Plain words first, studio words second. The one fact that makes this
+     drill winnable — the line runs square to the light — used to live in
+     the fourth paragraph of a collapsed how-to while carrying 40% of the
+     score. It says it on the first screen now, and the reveal is where
+     "terminator" gets defined by a picture. */
   function setPlaceHint() {
     hint.textContent = 'sphere ' + (sphereIdx + 1) + ' of ' + SPHERES_PER_ROUND +
-      ' — draw the terminator across the sphere in one stroke, then drag ' +
-      'c=core · b=bounce · o=occlusion into place. (keys 1–4 + arrows)';
+      ' — draw the line across the sphere that runs square to the light arrow: ' +
+      'that is where the light stops (its studio name is the terminator). ' +
+      'lifting is fine — press near where you stopped and carry on. ' +
+      'then drag c = darkest band · b = light bouncing back off the floor · ' +
+      'o = where the ball touches the ground. (keys 1–4 + arrows)';
   }
 
   /* the glyph is decoration — screen readers should hear "next sphere",
@@ -502,8 +560,8 @@
 
   function handlePoints() {
     return [
-      pt(S.cx, S.cy, 0.75 * S.R, marks.k),
-      pt(S.cx, S.cy, 0.92 * S.R, marks.r),
+      pt(S.cx, S.cy, CORE_ORBIT * S.R, marks.k),
+      pt(S.cx, S.cy, BOUNCE_ORBIT * S.R, marks.r),
       { x: S.cx + marks.odx * S.R, y: S.groundY + marks.ody * S.R },
     ];
   }
@@ -732,9 +790,13 @@
     ctx.fillText('value plan', cx2, cy2 - r2 - 8);
     ctx.restore();
 
-    /* name the two bands the drill trains but never spells out */
+    /* name the bands the drill trains but never spelled out — including
+       the terminator itself, which was the one word the title concept
+       depended on and the only one the sheet never showed */
     var cp = pt(cx2, cy2, 0.86 * r2, trueCoreAngle(L));
     var bp = pt(cx2, cy2, 0.95 * r2, trueReflectedAngle(L));
+    var tp = pt(cx2, cy2, r2, trueTerminatorAxis(L));
+    planLabel(c, cx2, cy2, tp, 'terminator');
     planLabel(c, cx2, cy2, cp, 'core');
     planLabel(c, cx2, cy2, bp, 'bounce');
   }
@@ -874,7 +936,7 @@
       Math.abs(Math.round(parts.dc)) + '°' + turnGlyph(parts.dc);
     var row2 = 'bounce ' + parts.b + ' ' + tickGlyph(parts.b) + ' ' +
       Math.abs(Math.round(parts.db)) + '°' + turnGlyph(parts.db) +
-      '  ·  occl ' + parts.o + ' ' + tickGlyph(parts.o) + ' ' + parts.do_.toFixed(2) + 'R';
+      '  ·  contact ' + parts.o + ' ' + tickGlyph(parts.o) + ' ' + parts.do_.toFixed(2) + 'R';
     var row3 = 'ink = you  ·  lilac = answer';
     ctx.save();
     var size = 11, w;
@@ -949,10 +1011,10 @@
       ctx.font = monoFont(10, 600);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('draw the terminator', cx, cy);
+      ctx.fillText('draw the line square to the light ↗', cx, cy);
       ctx.restore();
     }
-    arcBand(cx, cy, 0.75 * R, marks.k, 22, Math.max(8, 0.14 * R), c.ink, 0.4, null);
+    arcBand(cx, cy, CORE_ORBIT * R, marks.k, 22, Math.max(8, 0.14 * R), c.ink, 0.4, null);
     arcBand(cx, cy, 0.92 * R, marks.r, 24, 2.5, c.ink, 0.9, [5, 4]);
 
     /* the answer, in the accent */
@@ -970,7 +1032,9 @@
     /* handles on top */
     var hp = handlePoints();
     var letters = ['c', 'b', 'o'];
-    var hr = COARSE ? 15 : 13;
+    /* the knob is drawn at roughly half its own grab reach, so the target
+       a mode gets is the target it can see */
+    var hr = Math.max(13, Math.min(18, Math.round(0.45 * hitR())));
     var i;
     ctx.save();
     ctx.font = monoFont(11, 700);
@@ -1016,8 +1080,8 @@
     var cx = S.cx, cy = S.cy, R = S.R, L = S.L;
     var hp = handlePoints();
     var truth = [
-      pt(cx, cy, 0.75 * R, trueCoreAngle(L)),
-      pt(cx, cy, 0.92 * R, trueReflectedAngle(L)),
+      pt(cx, cy, CORE_ORBIT * R, trueCoreAngle(L)),
+      pt(cx, cy, BOUNCE_ORBIT * R, trueReflectedAngle(L)),
       occ,
     ];
     ctx.save();
@@ -1052,6 +1116,29 @@
   }
 
   var dragging = -1, dragId = null, grabOff = null, drawingStroke = false;
+  var dragType = '';           /* pointerType that owns the sheet */
+  var lastPenAt = 0;           /* palm rejection: when a pen was last seen */
+  var liftAt = 0, liftPt = null; /* where and when the last stroke segment ended */
+  var RESUME_MS = 2500;
+
+  /* Palm rejection. pointerId guarding alone only rejects the SECOND
+     contact — on a tablet the palm usually lands FIRST — so a pen press
+     takes the sheet off a touch that is mid-stroke, and a touch press is
+     ignored for a moment after any pen. */
+  function palmBlocked(ev) {
+    return ev.pointerType === 'touch' && lastPenAt && (Date.now() - lastPenAt) < 1200;
+  }
+  function penPreempts(ev) {
+    return ev.pointerType === 'pen' && dragId !== null && dragType === 'touch';
+  }
+  function releasePointer() {
+    if (dragId !== null) { try { canvas.releasePointerCapture(dragId); } catch (e) {} }
+    dragging = -1;
+    dragId = null;
+    dragType = '';
+    grabOff = null;
+    drawingStroke = false;
+  }
 
   function applyDrag(idx, p) {
     var deg = Math.atan2(p.y - S.cy, p.x - S.cx) / DEG;
@@ -1071,28 +1158,49 @@
       else if (phase === 'done') hint.textContent = 'round done — press “new round” to go again.';
       return;
     }
+    if (ev.pointerType === 'pen') lastPenAt = Date.now();
+    if (palmBlocked(ev)) return;
     /* one pointer owns the sheet: a second finger (or a palm) must not
-       restart the stroke you are halfway through. */
-    if (dragId !== null) return;
+       restart the stroke you are halfway through — unless it is the pen,
+       which is the hand that meant it. */
+    if (dragId !== null) {
+      if (!penPreempts(ev)) return;
+      if (drawingStroke && marks.stroke) marks.stroke = null; /* palm ink, not yours */
+      releasePointer();
+    }
     ev.preventDefault();
+    /* preventDefault suppresses click-to-focus, and the keys the hint
+       advertises (1–4 + arrows) are the precision path for every hand
+       that cannot creep — restore focus explicitly. */
+    try { canvas.focus({ preventScroll: true }); } catch (e) { canvas.focus(); }
     clearConfirm();
     var p = pointerPos(ev);
     var hp = handlePoints();
-    var bestIdx = -1, bestD = Infinity, i, d, reach;
+    var reach = hitR();
+    var bestIdx = -1, bestD = Infinity, i, d;
     for (i = 0; i < 3; i++) {
-      /* 28px reach = a 56px touch target. Until the terminator is drawn the
-         sphere belongs to the stroke, so the two marks sitting ON it shrink
-         to a tap-on-the-dot; the occlusion mark lives below the sphere and
-         never competes with the stroke, so it keeps a full thumb target
-         from the very first frame. */
-      reach = (i === 2 || marks.drawn) ? 28 : 15;
+      /* every mark keeps its full reach from the very first frame. The old
+         15px pre-stroke reach for c and b was a trap: a beginner reaching
+         for a mark missed, fell through to the stroke branch, and drew an
+         accidental terminator instead. */
       d = Math.hypot(p.x - hp[i].x, p.y - hp[i].y);
       if (d < reach && d < bestD) { bestD = d; bestIdx = i; }
+    }
+    /* outside the sphere there is nothing else a press can mean, so snap:
+       take the nearest mark within 3× its reach rather than refusing. A
+       screenless tablet cannot see its own hand — a refusal there reads as
+       "this site is broken". */
+    if (bestIdx < 0 && Math.hypot(p.x - S.cx, p.y - S.cy) > S.R * 1.15) {
+      for (i = 0; i < 3; i++) {
+        d = Math.hypot(p.x - hp[i].x, p.y - hp[i].y);
+        if (d < 3 * reach && d < bestD) { bestD = d; bestIdx = i; }
+      }
     }
     if (bestIdx >= 0) {
       /* pick it up where you touched it — no teleport on a near miss */
       dragging = bestIdx;
       dragId = ev.pointerId;
+      dragType = ev.pointerType;
       kbSel = bestIdx + 1;
       var deg = Math.atan2(p.y - S.cy, p.x - S.cx) / DEG;
       if (bestIdx === 0) grabOff = signedDeltaDeg(deg, marks.k);
@@ -1107,15 +1215,34 @@
       draw();
       return;
     }
-    if (Math.hypot(p.x - S.cx, p.y - S.cy) <= S.R * 1.15) {
+    /* The start zone is R·1.15, and a press up to R·1.8 SNAPS onto it
+       rather than being refused: the first sample is pulled to the edge of
+       the zone and the rest of the stroke is yours. */
+    var fromC = Math.hypot(p.x - S.cx, p.y - S.cy);
+    if (fromC <= S.R * 1.8) {
+      if (fromC > S.R * 1.15 && fromC > 0) {
+        p = {
+          x: S.cx + (p.x - S.cx) * (S.R * 1.15) / fromC,
+          y: S.cy + (p.y - S.cy) * (S.R * 1.15) / fromC,
+        };
+      }
       drawingStroke = true;
       dragId = ev.pointerId;
-      marks.stroke = [p];
+      dragType = ev.pointerType;
+      /* A trackpad runs out of pad long before the sphere runs out of
+         width, so a lift does NOT end the line: press again near where you
+         stopped, soon after, and the same line carries on. The axis is
+         fitted to every segment together. */
+      var carry = marks.stroke && marks.stroke.length && liftPt &&
+        (Date.now() - liftAt) < RESUME_MS &&
+        Math.hypot(p.x - liftPt.x, p.y - liftPt.y) <= ArtDaily.startRadius(46);
+      if (!carry) marks.stroke = [];
+      marks.stroke.push(p);
       try { canvas.setPointerCapture(ev.pointerId); } catch (e) {}
       draw();
       return;
     }
-    hint.textContent = 'draw the terminator across the sphere, or drag one of the c · b · o marks.';
+    hint.textContent = 'draw your line across the sphere, or drag one of the c · b · o marks.';
   });
 
   canvas.addEventListener('pointermove', function (ev) {
@@ -1133,32 +1260,48 @@
   });
 
   function endDrag(ev) {
-    if (ev && dragId !== null && ev.pointerId !== dragId) return;
+    if (dragId === null) return;
+    if (ev && ev.pointerId !== dragId) return;
     if (drawingStroke) {
-      commitStroke();
+      var s = marks.stroke;
+      if (s && s.length) { liftPt = s[s.length - 1]; liftAt = Date.now(); }
       drawingStroke = false;
+      dragging = -1;
+      dragId = null;
+      dragType = '';
+      grabOff = null;
+      commitStroke();
+      return;
     }
     dragging = -1;
     dragId = null;
+    dragType = '';
     grabOff = null;
   }
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
+  /* A pointerup lost outside the canvas used to lock the sheet for good,
+     because pointerdown returns early while one is in flight. */
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
 
-  /* one stroke, fitted: its principal axis becomes the terminator */
+  /* The line, fitted: the principal axis of every segment drawn so far
+     becomes the terminator. A short attempt is an UNFINISHED line, not a
+     bad one — the ink is kept and the sheet says exactly what happened,
+     instead of binning the stroke and blaming the hand that made it. */
   function commitStroke() {
     var pts = [], i, s = marks.stroke || [];
     for (i = 0; i < s.length; i++) {
       if (Math.hypot(s[i].x - S.cx, s[i].y - S.cy) <= S.R * 1.25) pts.push(s[i]);
     }
     var fit = fitStrokeAxis(pts);
-    if (!fit || fit.span < 0.45 * S.R) {
-      marks.stroke = null;
-      hint.textContent = 'one long stroke across the sphere sets the terminator — edge to edge, not a tap.';
+    var need = Math.max(26, 0.45 * S.R);
+    if (!fit || fit.span < need) {
+      hint.textContent = 'you lifted — that line is still short. press near where you stopped ' +
+        'and carry on; the two halves count as one line.';
       draw();
       return;
     }
-    marks.stroke = pts;
     marks.t = fit.axis;
     marks.drawn = true;
     setPlaceHint();
@@ -1208,16 +1351,17 @@
          "new round" asks — then take the player at their word. */
       if (!marks.drawn && !doneNag) {
         doneNag = true;
-        hint.textContent = 'nothing drawn yet — one stroke across the sphere sets the terminator. press done again to score it as it stands.';
+        hint.textContent = 'nothing drawn yet — a line across the sphere, square to the light, sets the terminator. press done again to score it as it stands.';
         return;
       }
       var L = S.L;
-      var t = scoreTerminator(marks.t, L);
-      var cc = scoreCore(marks.k, L);
-      var b = scoreReflected(marks.r, L);
+      var tol = tolerances(S.R, ease);
+      var t = scoreTerminator(marks.t, L, tol.grace);
+      var cc = scoreCore(marks.k, L, tol.grace);
+      var b = scoreReflected(marks.r, L, tol.grace);
       var occ = trueOcclusionCenter(S.cx, S.groundY, S.R, L);
       var ox = S.cx + marks.odx * S.R, oy = S.groundY + marks.ody * S.R;
-      var o = scoreOcclusion(ox, oy, occ.x, occ.y, S.R);
+      var o = scoreOcclusion(ox, oy, occ.x, occ.y, tol.occGrace, tol.occZero);
       var item = itemScore(t, cc, b, o);
       items.push(item);
       parts = {
@@ -1231,7 +1375,10 @@
       if (sphereIdx < SPHERES_PER_ROUND - 1) {
         setDoneLabel('next sphere', '→');
         hint.textContent = 'sphere ' + (sphereIdx + 1) + ': ' + Math.round(item) +
-          '/100 — ink is yours, lilac is the answer. next light is trickier.';
+          '/100 — ink is yours, lilac is the answer. ' +
+          (FIRST_VISIT && round <= 1
+            ? 'the next light is the same easy kind — go again with what you just saw.'
+            : 'the next light is trickier.');
       } else {
         finishRound();
       }
@@ -1282,6 +1429,9 @@
   });
 
   ArtDaily.onTheme(function () { planCache.key = null; draw(); });
+  /* the hardware can change mid-session (a laptop user plugs in a tablet):
+     the marks are drawn at the size of the reach that mode gets. */
+  ArtDaily.onInput(function () { draw(); });
   window.addEventListener('resize', function () {
     var oldR = S ? S.R : 0, oldCx = S ? S.cx : 0, oldCy = S ? S.cy : 0;
     fitCanvas();

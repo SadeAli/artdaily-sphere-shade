@@ -39,7 +39,7 @@
   --hand: 'Caveat', 'Segoe Print', 'Comic Sans MS', cursive;
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 
-  --game-accent: var(--lilac);
+  --game-accent: var(--lilac); /* TODO: pick this game's accent */
 }
 
 :root[data-theme="dark"] {
@@ -383,16 +383,44 @@ a { color: inherit; }
   }
 }
 
+/* The SDK fills this when it knows the input hardware. Scores are eased
+   per device, so the drill says which device it eased for. */
+.hud-input { min-width: 0; border: 0; background: none; padding: 5px 2px; display: flex; align-items: flex-end; }
+.hud-input dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  max-width: 8.5rem;
+  line-height: 1.25;
+}
+
 /* ============================================================
    game-specific styles below this line
    ============================================================ */
 
 /* You draw the terminator on this sheet, so the crosshair the
    template sets is exactly right — but the buttons under it get
-   pressed with a thumb, twice a sphere. Full 44px targets. */
+   pressed with a thumb, twice a sphere. Full 44px targets, and
+   touch-action: manipulation so the double tap on "next sphere"
+   is two presses rather than an iOS zoom that persists into the
+   next stroke. */
 .game-controls .btn {
   display: inline-flex;
   align-items: center;
   gap: 0.3em;
   min-height: 44px;
+  touch-action: manipulation;
+}
+
+/* A slow, deliberate line — which is what this drill asks for — is a
+   long press to iOS Safari: without these it raises the copy/share
+   callout over the sheet mid-stroke, and a drag that starts on the
+   canvas can select the text around it. */
+.game-canvas {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
