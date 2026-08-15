@@ -386,3 +386,13 @@ a { color: inherit; }
 /* ============================================================
    game-specific styles below this line
    ============================================================ */
+
+/* You draw the terminator on this sheet, so the crosshair the
+   template sets is exactly right — but the buttons under it get
+   pressed with a thumb, twice a sphere. Full 44px targets. */
+.game-controls .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  min-height: 44px;
+}
