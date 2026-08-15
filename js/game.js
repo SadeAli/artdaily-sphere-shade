@@ -283,10 +283,14 @@
      player's hand right now. Pure: pass the sphere radius in, get pixels
      and degrees out. */
   function tolerances(R, ease) {
+    /* NaN falls to 0 via `||`; a non-finite radius has to be caught too,
+       because an infinite ramp makes scoreOcclusion hand out 100 for any
+       distance at all — a wrong score rather than a harsh one. */
+    var r = (R > 0 && isFinite(R)) ? R : 0;
     return {
       grace: ease(GRACE_DEG),
-      occGrace: Math.max(ease(GRACE_R) * (R || 0), ease(GRACE_PX)),
-      occZero: Math.max(0.9 * (R || 0), ZERO_PX),
+      occGrace: Math.max(ease(GRACE_R) * r, ease(GRACE_PX)),
+      occZero: Math.max(0.9 * r, ZERO_PX),
     };
   }
   function itemScore(t, c, r, o) {
@@ -391,15 +395,26 @@
      third of a radius apart at every size. */
   var CORE_ORBIT = 0.75, BOUNCE_ORBIT = 1.08;
 
-  /* ---- theme-aware inks (re-read on every repaint) ---- */
+  /* ---- theme-aware inks ----
+     Every ink is a custom property on :root, and the ONLY thing that moves
+     them is the data-theme attribute (see css/style.css) — so reading them
+     once per theme is the same answer as reading them once per repaint,
+     minus a forced style recalculation on every single pointermove. An
+     empty read (stylesheet not parsed yet) is never cached, so a cold boot
+     still corrects itself on the next frame. */
+  var inkCache = null, inkTheme = '';
   function inks() {
+    var t = ArtDaily.theme();
+    if (inkCache && inkTheme === t) return inkCache;
     var cs = getComputedStyle(document.documentElement);
-    return {
+    var c = {
       ink: cs.getPropertyValue('--ink').trim(),
       muted: cs.getPropertyValue('--muted').trim(),
       accent: cs.getPropertyValue('--game-accent').trim() || cs.getPropertyValue('--lilac').trim(),
       card: cs.getPropertyValue('--card').trim(),
     };
+    if (c.ink && c.card) { inkCache = c; inkTheme = t; }
+    return c;
   }
 
   var monoFamily = '';
@@ -419,20 +434,28 @@
       Math.round(a[2] * 0.55 + k[2] * 0.45) + ')';
   }
 
-  /* ---- crisp canvas at any devicePixelRatio; height tracks width ---- */
-  var W = 0, H = 0;
+  /* ---- crisp canvas at any devicePixelRatio; height tracks width ----
+     Assigning canvas.width BLANKS the sheet and throws away the plan
+     bitmap, so it is only ever assigned when something really moved. An
+     address bar sliding up on a phone fires a stream of resizes at an
+     unchanged width; those now cost nothing and, crucially, no longer
+     flash the drawing away and re-render the plan sphere pixel by pixel. */
+  var W = 0, H = 0, fitDpr = 0;
   function fitCanvas() {
     var rect = canvas.getBoundingClientRect();
-    W = Math.max(1, Math.round(rect.width));
+    var w = Math.max(1, Math.round(rect.width));
     /* taller sheet on phones: the sphere, the plan view and the reveal
        all need room that a 0.62 ratio does not give at 340px. */
-    H = Math.round(W * (W < 520 ? 0.78 : 0.62));
+    var h = Math.round(w * (w < 520 ? 0.78 : 0.62));
     var dpr = window.devicePixelRatio || 1;
+    if (w === W && h === H && dpr === fitDpr) return false;
+    W = w; H = h; fitDpr = dpr;
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     canvas.style.height = H + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     planCache.key = null;
+    return true;
   }
 
   /* ---- round state ---- */
@@ -533,11 +556,18 @@
     if (!midRound || confirmNew) { newRound(); return; }
     confirmNew = true;
     btnRound.textContent = 'discard round?';
+    /* The timer used to restore the PLACING hint, so arming the button
+       during a reveal and then waiting silently replaced the sphere's
+       score line with instructions for a step already finished — and
+       arming it after the round was over left the discard prompt on
+       screen for good. Put back whatever was actually there. */
+    var prevHint = hint.textContent;
     hint.textContent = 'that scraps this round — press again to start over, or carry on.';
     clearTimeout(confirmTimer);
     confirmTimer = setTimeout(function () {
       clearConfirm();
       if (phase === 'place') setPlaceHint();
+      else hint.textContent = prevHint;
     }, 4500);
   }
 
@@ -998,8 +1028,28 @@
     ctx.restore();
   }
 
-  /* ---- painting (canvas bg stays clear so the CSS dot-grid shows) ---- */
+  /* ---- repaint scheduling ----
+     A pen or a trackpad delivers positions far faster than the screen can
+     show them. Repainting synchronously inside every pointermove burned
+     three or four complete redraws — sun, plan view, sphere, terminator,
+     handles — inside one displayed frame, and only the last of them was
+     ever seen. draw() now just ASKS for the next frame; the browser runs
+     paint() once, immediately before it composites, which is also the
+     freshest possible moment to read the pointer's position from. */
+  var rafId = 0;
   function draw() {
+    if (rafId) return;
+    rafId = requestAnimationFrame(function () { rafId = 0; paint(); });
+  }
+  /* for the paths that must not show a blank frame — a resize has already
+     cleared the sheet, so it repaints on the spot */
+  function paintNow() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    paint();
+  }
+
+  /* ---- painting (canvas bg stays clear so the CSS dot-grid shows) ---- */
+  function paint() {
     var c = inks();
     ctx.clearRect(0, 0, W, H);
     if (!S || !marks) return;
@@ -1148,9 +1198,24 @@
   }
 
   /* ---- input ---- */
-  function pointerPos(ev) {
-    var rect = canvas.getBoundingClientRect();
-    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  /* One rect per EVENT, not one per sample: a 240Hz pen hands over a dozen
+     coalesced positions in a single dispatch, and measuring the canvas box
+     a dozen times to convert them is a dozen forced layouts for one answer
+     that cannot have changed in between. */
+  function pointerPos(ev, rect) {
+    var r = rect || canvas.getBoundingClientRect();
+    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+  }
+
+  /* Every position the hardware actually recorded, not just the one the
+     browser chose to dispatch. Between two pointermove events a fast flick
+     may have travelled 200px through three real samples; without these the
+     stroke is the chord across them, and its fitted length — the thing
+     that decides whether the line counts — comes up short on exactly the
+     confident, quick strokes this drill is trying to encourage. */
+  function samplesOf(ev) {
+    var evs = (typeof ev.getCoalescedEvents === 'function') ? ev.getCoalescedEvents() : null;
+    return (evs && evs.length) ? evs : [ev];
   }
 
   var dragging = -1, dragId = null, grabOff = null, drawingStroke = false;
@@ -1287,12 +1352,18 @@
     if (phase !== 'place' || ev.pointerId !== dragId) return;
     if (dragging < 0 && !drawingStroke) return;
     ev.preventDefault();
-    var p = pointerPos(ev);
+    var rect = canvas.getBoundingClientRect();
     if (drawingStroke) {
-      var last = marks.stroke[marks.stroke.length - 1];
-      if (Math.hypot(p.x - last.x, p.y - last.y) >= 2) marks.stroke.push(p);
+      var evs = samplesOf(ev), i, p, last;
+      for (i = 0; i < evs.length; i++) {
+        p = pointerPos(evs[i], rect);
+        last = marks.stroke[marks.stroke.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 2) marks.stroke.push(p);
+      }
     } else {
-      applyDrag(dragging, p);
+      /* a drag only ever wants where the hand IS — the samples in between
+         are positions it has already left */
+      applyDrag(dragging, pointerPos(ev, rect));
     }
     draw();
   });
@@ -1315,6 +1386,18 @@
     }
     if (drawingStroke) {
       var s = marks.stroke;
+      /* THE TAIL OF A FAST STROKE. pointerup carries a position of its own,
+         and it is the only record of where the hand actually stopped — the
+         last pointermove can be most of a frame behind it. Dropping it cost
+         the stroke its final travel, which is precisely the travel a quick
+         confident flick has the most of, and `span` is what decides whether
+         the line is accepted at all. It also anchors lift-and-resume: the
+         press that carries on is measured against where you really lifted. */
+      if (s && ev && ev.type === 'pointerup' && typeof ev.clientX === 'number') {
+        var end = pointerPos(ev);
+        var tail = s.length ? s[s.length - 1] : null;
+        if (!tail || Math.hypot(end.x - tail.x, end.y - tail.y) >= 0.5) s.push(end);
+      }
       if (s && s.length) { liftPt = s[s.length - 1]; liftAt = Date.now(); }
       drawingStroke = false;
       dragging = -1;
@@ -1494,13 +1577,21 @@
     btnHow.setAttribute('aria-expanded', String(!howTo.hidden));
   });
 
-  ArtDaily.onTheme(function () { planCache.key = null; draw(); });
+  ArtDaily.onTheme(function () { inkCache = null; planCache.key = null; paintNow(); });
   /* the hardware can change mid-session (a laptop user plugs in a tablet):
      the marks are drawn at the size of the reach that mode gets. */
   ArtDaily.onInput(function () { draw(); });
-  window.addEventListener('resize', function () {
+
+  /* A phone fires `resize` on every pixel of address-bar slide, and each
+     one used to reallocate the canvas backing store, re-lay-out the sphere
+     and rescale the stroke. The width is what the sheet is built from, so
+     a resize that did not change it has no work in it at all — and the
+     ones that do change it are folded into a single frame. */
+  var resizeRaf = 0;
+  function onResize() {
+    resizeRaf = 0;
     var oldR = S ? S.R : 0, oldCx = S ? S.cx : 0, oldCy = S ? S.cy : 0;
-    fitCanvas();
+    if (!fitCanvas()) return;   /* nothing moved, and nothing was cleared */
     relayout();
     /* a drawn stroke is in pixels — carry it onto the new sheet */
     if (marks && marks.stroke && oldR) {
@@ -1511,7 +1602,11 @@
         };
       }
     }
-    draw();
+    paintNow();   /* fitCanvas already blanked the sheet — no empty frame */
+  }
+  window.addEventListener('resize', function () {
+    if (resizeRaf) return;
+    resizeRaf = requestAnimationFrame(onResize);
   });
 
   /* ---- boot ---- */
