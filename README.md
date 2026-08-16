@@ -8,7 +8,9 @@ hand, not just the eye — then drag the core-shadow band, the bounce
 (reflected) light and the contact (occlusion) shadow to where they
 belong. Hit done and the true anatomy is revealed in lilac, with a
 dashed line from each of your marks to where it belonged, next to a
-flat-value plan sphere with its bands named — terminator included.
+flat-value plan sphere with its bands named — terminator included. The
+score line names whichever of the four marks came out weakest
+(`markNote`, pure), so the reveal is a lesson and not just a number.
 Sphere 1 is side-lit, sphere 2 goes three-quarter or back; on a first
 ever visit both spheres keep the easy light, so the first round is
 winnable before the drill escalates.

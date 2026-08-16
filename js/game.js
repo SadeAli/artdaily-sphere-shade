@@ -316,6 +316,44 @@
     return GLYPHS[((oct % 8) + 8) % 8];
   }
 
+  /* THE FIRST REVEAL HAS TO TEACH, NOT JUST SCORE. The sphere's reveal
+     line said "42/100 — ink is yours, lilac is the answer" and stopped
+     there: the four part scores existed (they are printed on the sheet in
+     8–11px type, next to glyphs nothing defines) but the one sentence a
+     beginner actually reads — and the ONLY thing a screen-reader player
+     ever gets — carried no lesson at all. Every sibling drill names the
+     miss in words; this one did not.
+
+     So the weakest of the four marks is named, in plain words, with the
+     one thing about it that is always true. Those claims are checked, not
+     guessed: the bounce truth is below the sphere's centre on the screen
+     and within 31° of straight-away-from-the-sun on EVERY light this
+     drill deals (measured over the dealt azimuth/tilt ranges), and the
+     terminator is exactly 90° from the light at any tilt. The core's
+     darkest point genuinely wanders — up to 144° off the anti-light
+     direction on the steeper lights — so it gets no invented rule of
+     thumb; it gets pointed at the dashed line and the named value plan,
+     which is where the answer honestly lives. Pure: parts in, string out. */
+  var MARK_NOTE = {
+    t: 'your line — it runs at a right angle (90°) to the light arrow, whatever the tilt.',
+    c: 'the c mark (darkest band) — follow its dashed line to the lilac answer, ' +
+       'and see it named on the value plan.',
+    b: 'the b mark (bounce light) — it sits low on the shadow side, where the floor ' +
+       'throws light back up.',
+    o: 'the o mark (contact shadow) — it hugs the ground under the ball, nudged a ' +
+       'little away from the sun.',
+  };
+  function finite0(v) { v = Number(v); return isFinite(v) ? v : 0; }
+  function markNote(parts) {
+    if (!parts) return '';
+    var keys = ['t', 'c', 'b', 'o'], k = 't', i;
+    for (i = 1; i < keys.length; i++) {
+      if (finite0(parts[keys[i]]) < finite0(parts[k])) k = keys[i];
+    }
+    if (finite0(parts[k]) >= 75) return 'all four marks landed.';
+    return 'weakest was ' + MARK_NOTE[k];
+  }
+
   /* Least-squares principal axis of a drawn stroke, in degrees, plus
      how far the stroke actually runs along it — a tap is not a line. */
   function fitStrokeAxis(pts) {
@@ -1027,17 +1065,35 @@
       Math.abs(Math.round(parts.dt)) + '°' + turnGlyph(parts.dt) +
       '  ·  core ' + parts.c + ' ' + tickGlyph(parts.c) + ' ' +
       Math.abs(Math.round(parts.dc)) + '°' + turnGlyph(parts.dc);
+    /* "0.42R" was algebra: R is the sphere's radius, a letter this sheet
+       never prints anywhere, on the first reveal a beginner ever reads. */
     var row2 = 'bounce ' + parts.b + ' ' + tickGlyph(parts.b) + ' ' +
       Math.abs(Math.round(parts.db)) + '°' + turnGlyph(parts.db) +
-      '  ·  contact ' + parts.o + ' ' + tickGlyph(parts.o) + ' ' + parts.do_.toFixed(2) + 'R';
-    var row3 = 'ink = you  ·  lilac = answer';
+      '  ·  contact ' + parts.o + ' ' + tickGlyph(parts.o) + ' ' +
+      parts.do_.toFixed(2) + ' × radius';
+    /* …and the third row is the legend, so it defines the OTHER undefined
+       glyph on these two lines too: ↻ / ↺ is which way to turn the mark. */
+    var row3 = 'ink = you · lilac = answer · ↻↺ = which way to turn';
     ctx.save();
-    var size = 11, w;
-    do {
+    /* The legend was never measured, only rows 1 and 2 were — so the row
+       that exists to explain the other two was the one free to run off the
+       card it is printed on (and, on a 330px phone, off the sheet). It is
+       sized with them now, and it can no longer come out LARGER than the
+       rows it captions: the old loop left `size` one step below the size it
+       had measured, then floored the legend at 9px, so an 8px row 1 sat
+       under a 9px row 3. */
+    var size = 11, w = 0, legend = 9;
+    while (true) {
+      /* one step smaller than the rows, but never bigger than them — the
+         old max(9, …) alone still printed a 9px legend under 8px rows */
+      legend = Math.min(size, Math.max(9, size - 1));
       ctx.font = monoFont(size, 700);
-      w = Math.max(ctx.measureText(row1).width, ctx.measureText(row2).width) + 16;
+      w = Math.max(ctx.measureText(row1).width, ctx.measureText(row2).width);
+      ctx.font = monoFont(legend, 600);
+      w = Math.max(w, ctx.measureText(row3).width) + 16;
+      if (w <= W - 12 || size <= 8) break;
       size -= 1;
-    } while (w > W - 12 && size >= 8);
+    }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     var top = Math.min(S.groundY + 14, H - 58);
@@ -1046,9 +1102,10 @@
     ctx.fillRect(0.5 * W - w / 2, top, w, 54);
     ctx.globalAlpha = 1;
     ctx.fillStyle = c.ink;
+    ctx.font = monoFont(size, 700);
     ctx.fillText(row1, 0.5 * W, top + 15);
     ctx.fillText(row2, 0.5 * W, top + 31);
-    ctx.font = monoFont(Math.max(9, size), 600);
+    ctx.font = monoFont(legend, 600);
     ctx.fillText(row3, 0.5 * W, top + 47);
     ctx.restore();
   }
@@ -1562,9 +1619,9 @@
       if (sphereIdx < SPHERES_PER_ROUND - 1) {
         setDoneLabel('next sphere', '→');
         hint.textContent = 'sphere ' + (sphereIdx + 1) + ': ' + Math.round(item) +
-          '/100 — ink is yours, lilac is the answer. ' +
+          '/100 — ink is yours, lilac is the answer. ' + markNote(parts) + ' ' +
           (FIRST_VISIT && round <= 1
-            ? 'the next light is the same easy kind — go again with what you just saw.'
+            ? 'the next light is the same easy kind.'
             : 'the next light is trickier.');
       } else {
         finishRound();
@@ -1586,7 +1643,8 @@
     var res = ArtDaily.report(roundScore(items));
     hudScore.textContent = String(res.score);
     hudBest.textContent = res.best === null ? '–' : String(res.best);
-    hint.textContent = 'round done — ink is yours, lilac is the answer. press “new round” to go again.';
+    hint.textContent = 'round done — ink is yours, lilac is the answer. ' +
+      markNote(parts) + ' press “new round” to go again.';
     setDoneLabel('finished', '✓');
     btnDone.disabled = true;
     /* A first-ever round has no previous best, so isNewBest is
