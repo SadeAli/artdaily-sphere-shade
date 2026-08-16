@@ -1697,13 +1697,24 @@
     if (!fitCanvas()) return;   /* nothing moved, and nothing was cleared */
     relayout();
     /* a drawn stroke is in pixels — carry it onto the new sheet */
-    if (marks && marks.stroke && oldR) {
-      for (var i = 0; i < marks.stroke.length; i++) {
-        marks.stroke[i] = {
-          x: S.cx + (marks.stroke[i].x - oldCx) * S.R / oldR,
-          y: S.cy + (marks.stroke[i].y - oldCy) * S.R / oldR,
+    if (oldR) {
+      var moveP = function (p) {
+        return {
+          x: S.cx + (p.x - oldCx) * S.R / oldR,
+          y: S.cy + (p.y - oldCy) * S.R / oldR,
         };
+      };
+      if (marks && marks.stroke) {
+        for (var i = 0; i < marks.stroke.length; i++) marks.stroke[i] = moveP(marks.stroke[i]);
       }
+      /* …and so is WHERE YOU LIFTED. liftPt held a reference to the very
+         point object the loop above replaces, so after a rotation it
+         still pointed at the old sheet's pixels — and lift-and-resume
+         measures the next press against it. Inside the 2.5s resume
+         window a phone turned mid-line either refused to carry the line
+         on (the press was nowhere near the stale point) or carried one
+         it should not have. It travels with the ink it came from. */
+      if (liftPt) liftPt = moveP(liftPt);
     }
     paintNow();   /* fitCanvas already blanked the sheet — no empty frame */
   }
