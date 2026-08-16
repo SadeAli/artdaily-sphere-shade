@@ -478,7 +478,7 @@
   var marks = null;  /* { t, k, r, odx, ody, stroke, drawn } */
   var parts = null;  /* rounded part scores for the reveal ticks */
   var kbSel = 0, kbActive = false;
-  var confirmNew = false, confirmTimer = null;
+  var confirmNew = false, confirmTimer = null, confirmHint = '';
   var doneNag = false;  /* has done-with-nothing-drawn already been queried? */
 
   function rand(lo, hi) { return lo + Math.random() * (hi - lo); }
@@ -564,31 +564,35 @@
 
   /* mid-round the new-round button throws away a scored sphere, so it
      asks first instead of silently binning it. */
+  var CONFIRM_MSG = 'that scraps this round — press again to start over, or carry on.';
   function requestNewRound() {
     var midRound = (phase === 'place' || phase === 'reveal') &&
       (sphereIdx > 0 || items.length > 0 || (marks && (marks.drawn || marks.moved)));
     if (!midRound || confirmNew) { newRound(); return; }
     confirmNew = true;
     btnRound.textContent = 'discard round?';
-    /* The timer used to restore the PLACING hint, so arming the button
-       during a reveal and then waiting silently replaced the sphere's
-       score line with instructions for a step already finished — and
-       arming it after the round was over left the discard prompt on
-       screen for good. Put back whatever was actually there. */
-    var prevHint = hint.textContent;
-    hint.textContent = 'that scraps this round — press again to start over, or carry on.';
+    confirmHint = hint.textContent;
+    hint.textContent = CONFIRM_MSG;
     clearTimeout(confirmTimer);
-    confirmTimer = setTimeout(function () {
-      clearConfirm();
-      if (phase === 'place') setPlaceHint();
-      else hint.textContent = prevHint;
-    }, 4500);
+    confirmTimer = setTimeout(clearConfirm, 4500);
   }
 
   function clearConfirm() {
     clearTimeout(confirmTimer);
     if (!confirmNew) return;
     confirmNew = false;
+    /* The prompt leaves with the button it belonged to, whatever cleared
+       it — the timer, a press on the sheet, a press on done. Only the
+       timer used to do this, so grabbing a mark while the button was armed
+       snapped the button back to "new round" and left the sheet warning
+       about a discard that was no longer on offer, for the rest of the
+       sphere. Restoring is conditional because anything that has written
+       to the hint since owns the line: the reveal's score, a miss message,
+       the short-line nudge. */
+    if (hint.textContent === CONFIRM_MSG) {
+      if (phase === 'place') setPlaceHint();
+      else hint.textContent = confirmHint;
+    }
     btnRound.textContent = '';
     btnRound.appendChild(document.createTextNode('new round '));
     var s = document.createElement('span');
@@ -1247,11 +1251,10 @@
      may have travelled 200px through three real samples; without these the
      stroke is the chord across them, and its fitted length — the thing
      that decides whether the line counts — comes up short on exactly the
-     confident, quick strokes this drill is trying to encourage. */
-  function samplesOf(ev) {
-    var evs = (typeof ev.getCoalescedEvents === 'function') ? ev.getCoalescedEvents() : null;
-    return (evs && evs.length) ? evs : [ev];
-  }
+     confident, quick strokes this drill is trying to encourage.
+     ArtDaily.samples is that pattern once, guarded; this drill used to
+     hand-roll it, and an engine that throws out of getCoalescedEvents took
+     the whole pointermove handler down with it. */
 
   var dragging = -1, dragId = null, grabOff = null, drawingStroke = false;
   var dragType = '';           /* pointerType that owns the sheet */
@@ -1389,7 +1392,7 @@
     ev.preventDefault();
     var rect = canvas.getBoundingClientRect();
     if (drawingStroke) {
-      var evs = samplesOf(ev), i, p, last;
+      var evs = ArtDaily.samples(ev), i, p, last;
       for (i = 0; i < evs.length; i++) {
         p = pointerPos(evs[i], rect);
         last = marks.stroke[marks.stroke.length - 1];
