@@ -302,6 +302,20 @@
     return items.length ? sum / items.length : 0;
   }
 
+  /* THE ARROW ON THE COLD-OPEN CUE. The centre of the sphere used to say
+     "…to the light ↗" with that glyph hard-coded, and the sun stands
+     up-LEFT on half the lights dealt — including half of the easy ones a
+     first-ever visit gets. The first instruction a beginner reads pointed
+     the wrong way every other round. It is derived from the azimuth now:
+     canvas degrees, 0 = right, 90 = down, so "up" is negative. A
+     non-finite azimuth has no direction to name and gets none. */
+  var GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'];
+  function lightGlyph(azDeg) {
+    if (!isFinite(azDeg)) return '';
+    var oct = Math.round(norm180(azDeg) / 45);
+    return GLYPHS[((oct % 8) + 8) % 8];
+  }
+
   /* Least-squares principal axis of a drawn stroke, in degrees, plus
      how far the stroke actually runs along it — a tap is not a line. */
   function fitStrokeAxis(pts) {
@@ -600,8 +614,11 @@
   function setPlaceHint() {
     var head = 'sphere ' + (sphereIdx + 1) + ' of ' + SPHERES_PER_ROUND + ' — ';
     if (!marks || !marks.drawn) {
-      hint.textContent = head + 'draw the line across the sphere that runs square ' +
-        'to the light arrow: that is where the light stops ' +
+      /* "square to" is a studio idiom for "at a right angle to", and it
+         was carrying 40% of the score on the first screen a beginner
+         ever sees. Say the school word. */
+      hint.textContent = head + 'draw the line across the sphere that runs at a ' +
+        'right angle (90°) to the light arrow: that is where the light stops ' +
         '(its studio name is the terminator).';
       return;
     }
@@ -998,7 +1015,11 @@
   function turnGlyph(d) { return d >= 0 ? '↻' : '↺'; }
 
   function drawTicks(c) {
-    var row1 = 'term ' + parts.t + ' ' + tickGlyph(parts.t) + ' ' +
+    /* "term" was an abbreviation of a word the drill spends the whole
+       reveal teaching, and on its own it reads as the English "term".
+       The player drew a LINE; the value plan next to it is where the
+       studio name gets attached to the picture. */
+    var row1 = 'line ' + parts.t + ' ' + tickGlyph(parts.t) + ' ' +
       Math.abs(Math.round(parts.dt)) + '°' + turnGlyph(parts.dt) +
       '  ·  core ' + parts.c + ' ' + tickGlyph(parts.c) + ' ' +
       Math.abs(Math.round(parts.dc)) + '°' + turnGlyph(parts.dc);
@@ -1094,12 +1115,26 @@
     }
     drawTerminator(cx, cy, R, impliedLight(marks.t), c.ink, marks.drawn ? 2.5 : 1.5, marks.drawn ? 0.3 : 0.18);
     if (!marks.drawn) {
+      /* The cold-open cue. It was 35 characters centred on a sphere whose
+         centre is 0.30·W, so on a 340px phone its left end hung off the
+         sheet — the first instruction of the drill, clipped. Shorter, kept
+         on the sheet by its own measured width, haloed in the card colour
+         so it stays readable where it crosses the parked terminator, and
+         the arrow now points at the sun that was actually dealt. */
       ctx.save();
-      ctx.fillStyle = c.muted;
       ctx.font = monoFont(10, 600);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('draw the line square to the light ↗', cx, cy);
+      var cue = 'draw at 90° to the light ' + lightGlyph(S.az);
+      var half = ctx.measureText(cue).width / 2;
+      var cueX = Math.max(Math.min(half + 4, 0.5 * W),
+        Math.min(cx, Math.max(W - half - 4, 0.5 * W)));
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = c.card;
+      ctx.strokeText(cue, cueX, cy);
+      ctx.fillStyle = c.ink;
+      ctx.fillText(cue, cueX, cy);
       ctx.restore();
     }
     arcBand(cx, cy, CORE_ORBIT * R, marks.k, 22, Math.max(8, 0.14 * R), c.ink, 0.4, null);
@@ -1487,13 +1522,20 @@
 
   /* ---- done / next / finish ---- */
   function doneAction() {
+    /* Pressing done is an answer to "discard round?" too — it means no.
+       Without this the arm-timer was still running: it fired 4.5s later,
+       saw phase 'reveal' and pasted the placing hint it had saved back
+       over the sphere's score line, so the one screen that explains the
+       reveal vanished mid-read. (newRound already clears it; this path
+       did not.) */
+    clearConfirm();
     if (phase === 'place') {
       /* Done before a single stroke would score the parked marks, and the
          terminator alone is 40% of the sphere. Ask once — the same way
          "new round" asks — then take the player at their word. */
       if (!marks.drawn && !doneNag) {
         doneNag = true;
-        hint.textContent = 'nothing drawn yet — a line across the sphere, square to the light, sets the terminator. press done again to score it as it stands.';
+        hint.textContent = 'nothing drawn yet — a line across the sphere, at a right angle (90°) to the light, sets the terminator. press done again to score it as it stands.';
         return;
       }
       var L = S.L;

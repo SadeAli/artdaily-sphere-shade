@@ -1,8 +1,8 @@
 # Shade a Sphere 🌑
 
 A daily drill for the anatomy of light on form. Two spheres per round,
-each with a given sun: **draw** the line across the sphere that runs
-square to the light arrow — that is the terminator, where the light
+each with a given sun: **draw** the line across the sphere that runs at
+a right angle (90°) to the light arrow — that is the terminator, where the light
 stops; the drill fits the principal axis of your line, so it trains the
 hand, not just the eye — then drag the core-shadow band, the bounce
 (reflected) light and the contact (occlusion) shadow to where they
